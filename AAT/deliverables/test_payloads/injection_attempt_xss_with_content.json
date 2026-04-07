@@ -1,0 +1,11 @@
+{
+  "description": "XSS mixed with real content",
+  "target": "POST /content-submit",
+  "payload": {
+    "rawIdea": "The future of AI in healthcare <script>alert('xss')</script> and how doctors are adapting to new diagnostic tools"
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "note": "After HTML stripping, becomes: 'The future of AI in healthcare  and how doctors are adapting to new diagnostic tools'. Double space is harmless. AI generates drafts from the cleaned text."
+  }
+}

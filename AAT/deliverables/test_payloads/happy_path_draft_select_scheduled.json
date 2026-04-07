@@ -1,0 +1,17 @@
+{
+  "description": "Valid draft selection — select draft 1, save for scheduling",
+  "target": "POST /draft-select",
+  "payload": {
+    "submissionId": "sub_test456",
+    "selectedDraft": 1,
+    "publishImmediately": false
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "body": {
+      "success": true,
+      "status": "scheduled",
+      "adaptedContent": "[3 platform adaptations saved but not published]"
+    }
+  }
+}

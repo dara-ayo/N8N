@@ -1,0 +1,13 @@
+{
+  "description": "Fields with wrong data types — number where string expected",
+  "target": "POST /content-submit",
+  "payload": {
+    "rawIdea": 12345,
+    "url": true,
+    "publishImmediately": "yes"
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "note": "System coerces types. rawIdea becomes '12345', url becomes 'true' which fails URL format check. If rawIdea is usable, continues with that."
+  }
+}

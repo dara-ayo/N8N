@@ -1,0 +1,15 @@
+{
+  "description": "Body present but no rawIdea or url — should return 400 naming missing fields",
+  "target": "POST /content-submit",
+  "payload": {
+    "publishImmediately": true,
+    "someOtherField": "hello"
+  },
+  "expectedResult": {
+    "statusCode": 400,
+    "body": {
+      "error": true,
+      "message": "Either rawIdea or url must be provided"
+    }
+  }
+}

@@ -1,0 +1,969 @@
+{
+  "updatedAt": "2026-03-25T22:00:00.000Z",
+  "createdAt": "2026-03-25T22:00:00.000Z",
+  "id": "wf4-real-publishing",
+  "name": "Real Platform Publishing",
+  "description": "Standalone publishing workflow. Fetches adapted content and platform credentials from Supabase, publishes to LinkedIn, Twitter/X, and sends newsletter via Resend. Each platform publishes independently so one failure does not block others.",
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "publish-content",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000001",
+      "name": "Receive Publish Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "publish-content-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst errors = [];\n\nif (!body || typeof body !== 'object') {\n  errors.push('Request body is required');\n}\n\nconst submissionId = (body?.submission_id || body?.submissionId || '').toString().trim();\nlet platforms = body?.platforms || ['linkedin', 'twitter', 'newsletter'];\n\nif (!submissionId) {\n  errors.push('submission_id is required');\n}\n\nif (!Array.isArray(platforms)) {\n  platforms = [platforms];\n}\n\nconst validPlatforms = ['linkedin', 'twitter', 'newsletter'];\nconst invalidPlatforms = platforms.filter(p => !validPlatforms.includes(p));\nif (invalidPlatforms.length > 0) {\n  errors.push('Invalid platforms: ' + invalidPlatforms.join(', ') + '. Valid: linkedin, twitter, newsletter');\n}\n\nif (errors.length > 0) {\n  return [{ json: { error: true, statusCode: 400, message: errors.join('; ') } }];\n}\n\nconst idempotencyBase = submissionId + '_pub_' + Date.now().toString(36);\n\nreturn [{ json: {\n  error: false,\n  submissionId,\n  platforms,\n  idempotencyBase\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000002",
+      "name": "Validate Publish Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://your-project.supabase.co/rest/v1/adapted_content",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "submission_id",
+              "value": "=eq.{{ $json.submissionId }}"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            },
+            {
+              "name": "order",
+              "value": "created_at.desc"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000003",
+      "name": "Fetch Adapted Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://your-project.supabase.co/rest/v1/platform_connections",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "eq.active"
+            },
+            {
+              "name": "select",
+              "value": "platform,access_token,refresh_token,platform_user_id,platform_username,token_expires_at"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000004",
+      "name": "Fetch Platform Connections",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const adaptedRaw = $('Fetch Adapted Content').first().json;\nconst connectionsRaw = $input.first().json;\nconst publishInput = $('Validate Publish Input').first().json;\n\n// Parse adapted content\nconst adaptedArr = Array.isArray(adaptedRaw) ? adaptedRaw : [adaptedRaw];\nif (!adaptedArr || adaptedArr.length === 0 || !adaptedArr[0].submission_id) {\n  return [{ json: { error: true, statusCode: 404, message: 'No adapted content found for submission ' + publishInput.submissionId } }];\n}\nconst adapted = adaptedArr[0];\n\n// Parse connections\nconst connections = Array.isArray(connectionsRaw) ? connectionsRaw : [connectionsRaw];\nconst connectionMap = {};\nfor (const conn of connections) {\n  if (conn.platform) {\n    connectionMap[conn.platform] = conn;\n  }\n}\n\n// Check which requested platforms have active connections\nconst requestedPlatforms = publishInput.platforms;\nconst readyPlatforms = [];\nconst missingPlatforms = [];\n\nfor (const p of requestedPlatforms) {\n  if (p === 'newsletter') {\n    // Newsletter uses Resend API key from connections or env\n    readyPlatforms.push('newsletter');\n  } else if (connectionMap[p] && connectionMap[p].access_token) {\n    // Check token expiry\n    const expiresAt = connectionMap[p].token_expires_at ? new Date(connectionMap[p].token_expires_at) : null;\n    if (expiresAt && expiresAt < new Date()) {\n      missingPlatforms.push(p + ' (token expired)');\n    } else {\n      readyPlatforms.push(p);\n    }\n  } else {\n    missingPlatforms.push(p + ' (not connected)');\n  }\n}\n\nreturn [{ json: {\n  submissionId: publishInput.submissionId,\n  idempotencyBase: publishInput.idempotencyBase,\n  adapted: {\n    linkedinContent: adapted.linkedin_content || '',\n    twitterContent: adapted.twitter_content || '',\n    newsletterSubject: adapted.newsletter_subject || '',\n    newsletterContent: adapted.newsletter_content || ''\n  },\n  connections: connectionMap,\n  newsletterConnection: connectionMap.newsletter || null,\n  readyPlatforms,\n  missingPlatforms,\n  publishLinkedin: readyPlatforms.includes('linkedin'),\n  publishTwitter: readyPlatforms.includes('twitter'),\n  publishNewsletter: readyPlatforms.includes('newsletter')\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000005",
+      "name": "Prepare Publishing Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-linkedin-ready",
+              "leftValue": "={{ $json.publishLinkedin }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000006",
+      "name": "Should Publish LinkedIn?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linkedin.com/v2/ugcPosts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Prepare Publishing Data').first().json.connections.linkedin.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Restli-Protocol-Version",
+              "value": "2.0.0"
+            },
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $('Prepare Publishing Data').first().json.idempotencyBase }}_linkedin"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"author\": \"urn:li:person:{{ $('Prepare Publishing Data').first().json.connections.linkedin.platform_user_id }}\",\n  \"lifecycleState\": \"PUBLISHED\",\n  \"specificContent\": {\n    \"com.linkedin.ugc.ShareContent\": {\n      \"shareCommentary\": {\n        \"text\": {{ JSON.stringify($('Prepare Publishing Data').first().json.adapted.linkedinContent) }}\n      },\n      \"shareMediaCategory\": \"NONE\"\n    }\n  },\n  \"visibility\": {\n    \"com.linkedin.ugc.MemberNetworkVisibility\": \"PUBLIC\"\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000007",
+      "name": "Publish to LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        -300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst isError = !!response.error || !!response.errorMessage || (response.status && response.status >= 400);\n\nif (isError) {\n  return [{ json: {\n    platform: 'linkedin',\n    success: false,\n    error: response.message || response.errorMessage || response.error || JSON.stringify(response)\n  } }];\n}\n\nreturn [{ json: {\n  platform: 'linkedin',\n  success: true,\n  postId: response.id || response['X-RestLi-Id'] || null,\n  response: response\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000008",
+      "name": "Handle LinkedIn Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// LinkedIn was skipped\nreturn [{ json: {\n  platform: 'linkedin',\n  success: false,\n  error: 'LinkedIn not connected or token expired — skipped'\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000009",
+      "name": "LinkedIn Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-twitter-ready",
+              "leftValue": "={{ $('Prepare Publishing Data').first().json.publishTwitter }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000010",
+      "name": "Should Publish Twitter?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twitter.com/2/tweets",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Prepare Publishing Data').first().json.connections.twitter.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $('Prepare Publishing Data').first().json.idempotencyBase }}_twitter"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($('Prepare Publishing Data').first().json.adapted.twitterContent) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000011",
+      "name": "Publish to Twitter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst isError = !!response.error || !!response.errors || !!response.errorMessage || (response.status && response.status >= 400);\n\nif (isError) {\n  const errMsg = response.detail || response.message || response.errorMessage || (response.errors && response.errors[0]?.message) || JSON.stringify(response);\n  return [{ json: {\n    platform: 'twitter',\n    success: false,\n    error: errMsg\n  } }];\n}\n\nreturn [{ json: {\n  platform: 'twitter',\n  success: true,\n  tweetId: response.data?.id || response.id || null,\n  tweetText: response.data?.text || null,\n  response: response\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000012",
+      "name": "Handle Twitter Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Twitter was skipped\nreturn [{ json: {\n  platform: 'twitter',\n  success: false,\n  error: 'Twitter not connected or token expired — skipped'\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000013",
+      "name": "Twitter Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-newsletter-ready",
+              "leftValue": "={{ $('Prepare Publishing Data').first().json.publishNewsletter }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000014",
+      "name": "Should Send Newsletter?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Prepare Publishing Data').first().json.newsletterConnection ? $('Prepare Publishing Data').first().json.newsletterConnection.access_token : $env.RESEND_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Prepare Publishing Data').first().json.idempotencyBase }}_newsletter"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": {{ JSON.stringify($env.NEWSLETTER_FROM_EMAIL || 'content@fetemi.com') }},\n  \"to\": [{{ JSON.stringify($env.NEWSLETTER_TO_EMAIL || 'newsletter@fetemi.com') }}],\n  \"subject\": {{ JSON.stringify($('Prepare Publishing Data').first().json.adapted.newsletterSubject) }},\n  \"html\": {{ JSON.stringify($('Prepare Publishing Data').first().json.adapted.newsletterContent) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000015",
+      "name": "Send Newsletter via Resend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst isError = !!response.error || !!response.statusCode && response.statusCode >= 400;\n\nif (isError) {\n  return [{ json: {\n    platform: 'newsletter',\n    success: false,\n    error: response.message || response.error || JSON.stringify(response)\n  } }];\n}\n\nreturn [{ json: {\n  platform: 'newsletter',\n  success: true,\n  emailId: response.id || null,\n  response: response\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000016",
+      "name": "Handle Newsletter Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Newsletter was skipped\nreturn [{ json: {\n  platform: 'newsletter',\n  success: false,\n  error: 'Newsletter not configured — skipped'\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000017",
+      "name": "Newsletter Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const publishData = $('Prepare Publishing Data').first().json;\n\n// Collect results from all paths\nconst results = [];\nconst platformsPublished = [];\nconst errors = [];\n\n// Helper to safely get a result from a node\nfunction getResult(nodeName) {\n  try {\n    return $(nodeName).first().json;\n  } catch(e) {\n    return null;\n  }\n}\n\n// LinkedIn result\nconst linkedinResult = getResult('Handle LinkedIn Result') || getResult('LinkedIn Skipped');\nif (linkedinResult) {\n  results.push(linkedinResult);\n  if (linkedinResult.success) platformsPublished.push('linkedin');\n  else if (linkedinResult.error) errors.push({ platform: 'linkedin', error: linkedinResult.error });\n}\n\n// Twitter result\nconst twitterResult = getResult('Handle Twitter Result') || getResult('Twitter Skipped');\nif (twitterResult) {\n  results.push(twitterResult);\n  if (twitterResult.success) platformsPublished.push('twitter');\n  else if (twitterResult.error) errors.push({ platform: 'twitter', error: twitterResult.error });\n}\n\n// Newsletter result\nconst newsletterResult = getResult('Handle Newsletter Result') || getResult('Newsletter Skipped');\nif (newsletterResult) {\n  results.push(newsletterResult);\n  if (newsletterResult.success) platformsPublished.push('newsletter');\n  else if (newsletterResult.error) errors.push({ platform: 'newsletter', error: newsletterResult.error });\n}\n\nconst overallSuccess = platformsPublished.length > 0;\nconst status = overallSuccess ? 'published' : 'publish_failed';\n\nreturn [{ json: {\n  submissionId: publishData.submissionId,\n  success: overallSuccess,\n  status,\n  platformsPublished,\n  errors,\n  results,\n  publishedAt: overallSuccess ? new Date().toISOString() : null\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000018",
+      "name": "Aggregate Publishing Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://your-project.supabase.co/rest/v1/submissions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.submissionId }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": {{ JSON.stringify($json.status) }},\n  \"updated_at\": {{ JSON.stringify(new Date().toISOString()) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000019",
+      "name": "Update Submission Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2020,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://your-project.supabase.co/rest/v1/adapted_content",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "submission_id",
+              "value": "=eq.{{ $('Prepare Publishing Data').first().json.submissionId }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"published_at\": {{ JSON.stringify($('Aggregate Publishing Results').first().json.publishedAt) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000020",
+      "name": "Update Adapted Content Published At",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $('Aggregate Publishing Results').first().json;\n\nreturn [{ json: {\n  success: results.success,\n  submission_id: results.submissionId,\n  status: results.status,\n  platforms_published: results.platformsPublished,\n  errors: results.errors,\n  published_at: results.publishedAt,\n  message: results.success\n    ? 'Content published to: ' + results.platformsPublished.join(', ')\n    : 'Publishing failed for all platforms. See errors for details.'\n} }];"
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000021",
+      "name": "Format Final Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.success ? 200 : 207 }}"
+        }
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000022",
+      "name": "Return Publishing Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2680,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Input & Data Fetch\nValidate request, fetch adapted content and platform credentials from Supabase",
+        "height": 200,
+        "width": 900
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000101",
+      "name": "Sticky Note - Input and Fetch",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Platform Publishing\nConditional publish to LinkedIn, Twitter/X, and Newsletter. Each platform is independent: one failure does not block others. All requests have 3x retry with exponential backoff and idempotency keys.",
+        "height": 200,
+        "width": 700
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000102",
+      "name": "Sticky Note - Platform Publishing",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        -450
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Result Aggregation & Status Update\nCollect results from all platforms, update Supabase submission status, return unified response",
+        "height": 200,
+        "width": 700
+      },
+      "id": "d4e5f6a7-4001-4000-9001-000000000103",
+      "name": "Sticky Note - Results",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        -300
+      ]
+    }
+  ],
+  "connections": {
+    "Receive Publish Request": {
+      "main": [
+        [
+          {
+            "node": "Validate Publish Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Publish Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch Adapted Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Adapted Content": {
+      "main": [
+        [
+          {
+            "node": "Fetch Platform Connections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Platform Connections": {
+      "main": [
+        [
+          {
+            "node": "Prepare Publishing Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Publishing Data": {
+      "main": [
+        [
+          {
+            "node": "Should Publish LinkedIn?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Should Publish Twitter?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Should Send Newsletter?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Publish LinkedIn?": {
+      "main": [
+        [
+          {
+            "node": "Publish to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LinkedIn Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Handle LinkedIn Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle LinkedIn Result": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Publishing Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn Skipped": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Publishing Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Publish Twitter?": {
+      "main": [
+        [
+          {
+            "node": "Publish to Twitter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Twitter Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to Twitter": {
+      "main": [
+        [
+          {
+            "node": "Handle Twitter Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Twitter Result": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Publishing Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twitter Skipped": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Publishing Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Send Newsletter?": {
+      "main": [
+        [
+          {
+            "node": "Send Newsletter via Resend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Newsletter Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Newsletter via Resend": {
+      "main": [
+        [
+          {
+            "node": "Handle Newsletter Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Newsletter Result": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Publishing Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Newsletter Skipped": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Publishing Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Publishing Results": {
+      "main": [
+        [
+          {
+            "node": "Update Submission Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Submission Status": {
+      "main": [
+        [
+          {
+            "node": "Update Adapted Content Published At",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Adapted Content Published At": {
+      "main": [
+        [
+          {
+            "node": "Format Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Final Response": {
+      "main": [
+        [
+          {
+            "node": "Return Publishing Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "pinData": {}
+}

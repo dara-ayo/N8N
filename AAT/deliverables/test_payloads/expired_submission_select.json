@@ -1,0 +1,16 @@
+{
+  "description": "Draft selection for a submission older than 72 hours",
+  "target": "POST /draft-select",
+  "payload": {
+    "submissionId": "sub_expired_old",
+    "selectedDraft": 1,
+    "publishImmediately": false
+  },
+  "expectedResult": {
+    "statusCode": 410,
+    "body": {
+      "error": true,
+      "message": "This submission has expired. Please create a new content submission."
+    }
+  }
+}

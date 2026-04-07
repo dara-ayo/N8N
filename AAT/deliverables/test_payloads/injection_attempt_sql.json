@@ -1,0 +1,11 @@
+{
+  "description": "SQL injection attempt in rawIdea field",
+  "target": "POST /content-submit",
+  "payload": {
+    "rawIdea": "'; DROP TABLE submissions; --"
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "note": "SQL injection is harmless — Supabase REST API uses parameterized queries. The text is treated as a literal string and passed to AI generation as-is. The AI will produce a strange article about database commands, but nothing breaks."
+  }
+}

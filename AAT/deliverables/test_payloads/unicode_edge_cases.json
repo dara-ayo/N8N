@@ -1,0 +1,11 @@
+{
+  "description": "Unicode edge cases — emoji, RTL, zero-width characters",
+  "target": "POST /content-submit",
+  "payload": {
+    "rawIdea": "\ud83d\ude80 The future of AI \u0645\u0633\u062a\u0642\u0628\u0644 \u0627\u0644\u0630\u0643\u0627\u0621 \u0627\u0644\u0627\u0635\u0637\u0646\u0627\u0639\u064a \u200b\u200b zero-width spaces and emoji sequences \ud83d\udc68\u200d\ud83d\udcbb\ud83d\udc69\u200d\ud83d\udd2c"
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "note": "Unicode characters pass through validation. The AI handles multilingual input. Zero-width spaces are harmless in content generation. System should work normally."
+  }
+}

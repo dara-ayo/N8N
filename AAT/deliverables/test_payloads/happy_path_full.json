@@ -1,0 +1,18 @@
+{
+  "description": "Valid payload with all fields — raw idea + URL + publish immediately",
+  "target": "POST /content-submit",
+  "payload": {
+    "rawIdea": "How remote work is reshaping urban real estate markets in 2026. Office vacancy rates hit record highs while suburban housing demand surges. Companies are rethinking their physical footprint entirely.",
+    "url": "https://example.com/remote-work-real-estate-trends",
+    "publishImmediately": true
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "body": {
+      "success": true,
+      "submissionId": "sub_*",
+      "status": "pending_review",
+      "drafts": "[3 draft objects with index, angle, title, preview, wordCount]"
+    }
+  }
+}

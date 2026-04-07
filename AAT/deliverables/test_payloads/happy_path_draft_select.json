@@ -1,0 +1,19 @@
+{
+  "description": "Valid draft selection — select draft 2, publish immediately",
+  "target": "POST /draft-select",
+  "payload": {
+    "submissionId": "sub_test123",
+    "selectedDraft": 2,
+    "publishImmediately": true
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "body": {
+      "success": true,
+      "status": "published",
+      "linkedin": { "content": "...", "charCount": "<= 3000" },
+      "twitter": { "content": "...", "charCount": "<= 280" },
+      "newsletter": { "subject": "...", "content": "...", "wordCount": "250-600" }
+    }
+  }
+}

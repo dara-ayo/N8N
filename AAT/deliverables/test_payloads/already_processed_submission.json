@@ -1,0 +1,16 @@
+{
+  "description": "Draft selection for a submission already in 'processing' or 'published' state",
+  "target": "POST /draft-select",
+  "payload": {
+    "submissionId": "sub_already_done",
+    "selectedDraft": 1,
+    "publishImmediately": true
+  },
+  "expectedResult": {
+    "statusCode": 409,
+    "body": {
+      "error": true,
+      "message": "This submission has already been processed."
+    }
+  }
+}

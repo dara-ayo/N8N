@@ -1,0 +1,16 @@
+{
+  "description": "Draft selection with index out of range",
+  "target": "POST /draft-select",
+  "payload": {
+    "submissionId": "sub_test123",
+    "selectedDraft": 5,
+    "publishImmediately": false
+  },
+  "expectedResult": {
+    "statusCode": 400,
+    "body": {
+      "error": true,
+      "message": "selectedDraft must be 1, 2, or 3"
+    }
+  }
+}

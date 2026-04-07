@@ -1,0 +1,16 @@
+{
+  "description": "Draft selection for a submission ID that doesn't exist",
+  "target": "POST /draft-select",
+  "payload": {
+    "submissionId": "sub_does_not_exist_xyz",
+    "selectedDraft": 2,
+    "publishImmediately": true
+  },
+  "expectedResult": {
+    "statusCode": 404,
+    "body": {
+      "error": true,
+      "message": "Submission not found."
+    }
+  }
+}

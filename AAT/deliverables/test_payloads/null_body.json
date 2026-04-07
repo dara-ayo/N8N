@@ -1,0 +1,12 @@
+{
+  "description": "Null/missing body — should return 400",
+  "target": "POST /content-submit",
+  "payload": null,
+  "expectedResult": {
+    "statusCode": 400,
+    "body": {
+      "error": true,
+      "message": "Request body is required"
+    }
+  }
+}

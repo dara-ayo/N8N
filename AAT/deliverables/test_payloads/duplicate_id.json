@@ -1,0 +1,17 @@
+{
+  "description": "Same content submitted twice within 10 minutes — second should be rejected",
+  "target": "POST /content-submit (second call)",
+  "firstPayload": {
+    "rawIdea": "The future of quantum computing in healthcare"
+  },
+  "secondPayload": {
+    "rawIdea": "The future of quantum computing in healthcare"
+  },
+  "expectedResult": {
+    "statusCode": 409,
+    "body": {
+      "error": true,
+      "message": "This idea was already submitted recently. Check your pending reviews."
+    }
+  }
+}

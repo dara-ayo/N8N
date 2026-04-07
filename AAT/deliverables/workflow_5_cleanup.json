@@ -1,0 +1,241 @@
+{
+  "name": "Stale Submission Cleanup",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-5001-4000-8001-000000000001",
+      "name": "Schedule Trigger - Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://your-project.supabase.co/rest/v1/submissions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "in.(generating,processing)"
+            },
+            {
+              "name": "updated_at",
+              "value": "=lt.{{ new Date(Date.now() - 15 * 60 * 1000).toISOString() }}"
+            },
+            {
+              "name": "select",
+              "value": "id,status,updated_at,created_at"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "{{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-5001-4000-8001-000000000002",
+      "name": "Find Stuck Submissions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-stuck-check",
+              "leftValue": "={{ $json.length || Object.keys($json).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-5001-4000-8001-000000000003",
+      "name": "Has Stuck Submissions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all stuck submission IDs from input items\nconst items = $input.all();\nconst stuckIds = items.map(item => item.json.id).filter(id => id);\n\nif (stuckIds.length === 0) {\n  return [{json: {stuckIds: [], idFilter: '', count: 0}}];\n}\n\n// Build the Supabase filter for multiple IDs: id=in.(id1,id2,...)\nconst idFilter = 'in.(' + stuckIds.join(',') + ')';\n\nreturn [{json: {\n  stuckIds: stuckIds,\n  idFilter: idFilter,\n  count: stuckIds.length\n}}];"
+      },
+      "id": "a1b2c3d4-5001-4000-8001-000000000004",
+      "name": "Collect Stuck IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://your-project.supabase.co/rest/v1/submissions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "={{ $json.idFilter }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "{{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"error\",\n  \"error_details\": \"Automatically marked as failed - processing timed out after 15 minutes\"\n}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-5001-4000-8001-000000000005",
+      "name": "Mark as Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1060,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the stuck IDs and count from the previous code node\nconst items = $input.all();\nconst now = new Date().toISOString();\n\n// Collect all IDs from the PATCH response items\nconst cleanedIds = items.map(item => item.json.id).filter(id => id);\nconst count = cleanedIds.length;\n\nconst summary = {\n  cleanupTimestamp: now,\n  totalCleaned: count,\n  cleanedSubmissionIds: cleanedIds,\n  message: count > 0 \n    ? `Cleanup complete: ${count} stuck submission(s) marked as error. IDs: ${cleanedIds.join(', ')}` \n    : 'Cleanup complete: No stuck submissions found.'\n};\n\nconsole.log(summary.message);\n\nreturn [{json: summary}];"
+      },
+      "id": "a1b2c3d4-5001-4000-8001-000000000006",
+      "name": "Log Cleanup Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger - Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Find Stuck Submissions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Stuck Submissions": {
+      "main": [
+        [
+          {
+            "node": "Has Stuck Submissions?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Stuck Submissions?": {
+      "main": [
+        [
+          {
+            "node": "Collect Stuck IDs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Collect Stuck IDs": {
+      "main": [
+        [
+          {
+            "node": "Mark as Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Error": {
+      "main": [
+        [
+          {
+            "node": "Log Cleanup Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

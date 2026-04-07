@@ -1,0 +1,11 @@
+{
+  "description": "XSS payload in rawIdea field",
+  "target": "POST /content-submit",
+  "payload": {
+    "rawIdea": "<script>alert('xss')</script><img src=x onerror=alert('xss')>"
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "note": "HTML tags are stripped by the validation node. The sanitized input becomes empty string after stripping, which should trigger the 'rawIdea required' error since no meaningful content remains. If somehow content remains after stripping, it's safe text passed to AI."
+  }
+}

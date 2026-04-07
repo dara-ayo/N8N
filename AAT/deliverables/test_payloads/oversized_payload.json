@@ -1,0 +1,15 @@
+{
+  "description": "Payload exceeding 1MB size limit",
+  "target": "POST /content-submit",
+  "payload": {
+    "rawIdea": "[GENERATED: string of 1,100,000 characters — 'A' repeated]"
+  },
+  "expectedResult": {
+    "statusCode": 400,
+    "body": {
+      "error": true,
+      "message": "Payload exceeds 1MB size limit"
+    }
+  },
+  "note": "Actual oversized payload generated at test time via script. This file contains the test specification."
+}

@@ -1,0 +1,15 @@
+{
+  "description": "Valid payload with only required field — raw idea, no URL, no publish flag",
+  "target": "POST /content-submit",
+  "payload": {
+    "rawIdea": "The hidden costs of AI adoption for small businesses"
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "body": {
+      "success": true,
+      "status": "pending_review",
+      "drafts": "[3 drafts, publishImmediately defaults to false]"
+    }
+  }
+}

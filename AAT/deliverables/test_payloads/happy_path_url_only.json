@@ -1,0 +1,15 @@
+{
+  "description": "Valid payload with only URL — system extracts and summarizes content",
+  "target": "POST /content-submit",
+  "payload": {
+    "url": "https://example.com/article-about-productivity-tips"
+  },
+  "expectedResult": {
+    "statusCode": 200,
+    "body": {
+      "success": true,
+      "status": "pending_review",
+      "drafts": "[3 drafts based on extracted URL content]"
+    }
+  }
+}

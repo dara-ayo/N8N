@@ -1,0 +1,15 @@
+{
+  "description": "Fields with only whitespace — should be treated as empty",
+  "target": "POST /content-submit",
+  "payload": {
+    "rawIdea": "   \n\t  ",
+    "url": "   "
+  },
+  "expectedResult": {
+    "statusCode": 400,
+    "body": {
+      "error": true,
+      "message": "Either rawIdea or url must be provided"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "description": "Two selection requests for the same submission arriving simultaneously",
+  "target": "POST /draft-select (x2 concurrent)",
+  "payload": {
+    "submissionId": "sub_concurrent_test",
+    "selectedDraft": 1,
+    "publishImmediately": true
+  },
+  "expectedResult": {
+    "firstRequest": { "statusCode": 200, "status": "published" },
+    "secondRequest": { "statusCode": 409, "message": "This submission has already been processed." },
+    "note": "The optimistic lock (status \u2192 'processing') prevents the second request from proceeding. First write wins."
+  }
+}

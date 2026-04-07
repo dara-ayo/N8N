@@ -1,0 +1,977 @@
+{
+  "name": "Draft Selection & Platform Adaptation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cf-draft-select",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000001",
+      "name": "Receive Draft Selection",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "draft-select-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst errors = [];\n\nif (!body || typeof body !== 'object') {\n  errors.push('Request body is required');\n}\n\nconst submissionId = body?.submissionId?.toString().trim() || body?.submission_id?.toString().trim() || '';\nconst selectedDraft = parseInt(body?.selectedDraft || body?.selected_draft, 10);\n\nif (!submissionId) {\n  errors.push('submission_id is required');\n}\n\nif (![1, 2, 3].includes(selectedDraft)) {\n  errors.push('selected_draft must be 1, 2, or 3');\n}\n\nif (errors.length > 0) {\n  return [{json: {error: true, statusCode: 400, message: errors.join('; ')}}];\n}\n\nreturn [{json: {\n  error: false,\n  submissionId,\n  selectedDraft,\n  publishImmediately: body?.publishImmediately === true || body?.publish_immediately === true\n}}];"
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000002",
+      "name": "Validate Selection Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://your-project.supabase.co/rest/v1/submissions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.submissionId }}"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000003",
+      "name": "Fetch Submission from Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.first().json;\nconst selectionInput = $('Validate Selection Input').first().json;\n\n// Handle array response from Supabase\nconst submissions = Array.isArray(results) ? results : [results];\n\nif (!submissions || submissions.length === 0 || !submissions[0].submission_id) {\n  return [{json: {error: true, statusCode: 404, message: 'Submission not found'}}];\n}\n\nconst submission = submissions[0];\n\n// Check status\nif (submission.status !== 'pending_review') {\n  return [{json: {error: true, statusCode: 409, message: `Submission is in '${submission.status}' state. Only 'pending_review' submissions can be selected.`}}];\n}\n\n// Check expiry (72 hours)\nconst createdAt = new Date(submission.created_at || submission.createdAt);\nconst now = new Date();\nconst hoursSinceCreation = (now - createdAt) / (1000 * 60 * 60);\n\nif (hoursSinceCreation > 72) {\n  return [{json: {error: true, statusCode: 410, message: 'Submission has expired. Drafts are only valid for 72 hours. Please create a new submission.'}}];\n}\n\nreturn [{json: {\n  error: false,\n  submission,\n  submissionId: selectionInput.submissionId,\n  selectedDraft: selectionInput.selectedDraft,\n  publishImmediately: selectionInput.publishImmediately\n}}];"
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000004",
+      "name": "Validate Submission State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://your-project.supabase.co/rest/v1/submissions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.submissionId }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"processing\",\n  \"selected_draft\": {{ $json.selectedDraft }},\n  \"processing_started_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000005",
+      "name": "Lock Submission",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $('Validate Submission State').first().json;\nconst submission = state.submission;\nconst selectedIndex = state.selectedDraft;\n\nlet drafts = submission.drafts;\nif (typeof drafts === 'string') {\n  try {\n    drafts = JSON.parse(drafts);\n  } catch(e) {\n    return [{json: {error: true, message: 'Could not parse stored drafts'}}];\n  }\n}\n\nif (!Array.isArray(drafts) || drafts.length === 0) {\n  return [{json: {error: true, message: 'No drafts found in submission'}}];\n}\n\nconst selected = drafts.find(d => d.index === selectedIndex);\nif (!selected) {\n  return [{json: {error: true, message: `Draft ${selectedIndex} not found. Available: ${drafts.map(d => d.index).join(', ')}`}}];\n}\n\nreturn [{json: {\n  submissionId: state.submissionId,\n  selectedDraft: selectedIndex,\n  draftTitle: selected.title,\n  draftContent: selected.content,\n  draftAngle: selected.angle,\n  draftWordCount: selected.wordCount,\n  publishImmediately: state.publishImmediately\n}}];"
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000006",
+      "name": "Extract Selected Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a social media expert. Adapt the following article into a LinkedIn post.\\n\\nFORMATTING RULES (follow exactly):\\n- Use the PAS (Problem -- Agitate -- Solution) copywriting technique\\n- Short paragraphs (max 2-3 lines)\\n- Use bullets or symbols (checkmarks, dots) for clarity\\n- Include 3-5 relevant emojis (no more)\\n- End with a clear call-to-action\\n- Keep under 3000 characters total\\n\\nWrite ONLY the LinkedIn post. No commentary or explanation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"ARTICLE:\\n\\n\" + {{ JSON.stringify($json.draftContent) }}\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000007",
+      "name": "Adapt for LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-api-cred",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nlet content = '';\ntry {\n  content = input.choices[0].message.content.trim();\n} catch(e) {\n  return [{json: {error: true, message: 'AI returned empty LinkedIn adaptation'}}];\n}\n\nif (content.length > 3000) {\n  content = content.substring(0, 2997) + '...';\n}\n\nconst hasCTA = /\\?|comment|share|follow|click|read|check out|let me know|what do you think/i.test(content);\n\nreturn [{json: {\n  linkedinContent: content,\n  charCount: content.length,\n  hasCTA,\n  truncated: content.length >= 3000\n}}];"
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000008",
+      "name": "Validate LinkedIn Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a social media expert. Adapt the following article into a single tweet for X (Twitter).\\n\\nFORMATTING RULES (follow exactly):\\n- Lead with the main benefit or insight\\n- One core idea only\\n- Use line breaks for readability if needed\\n- Maximum 1-2 hashtags, keep them relevant\\n- MUST be under 280 characters total (this is critical)\\n- No links unless the article contains one worth sharing\\n\\nWrite ONLY the tweet text. No commentary or explanation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"ARTICLE:\\n\\n\" + {{ JSON.stringify($('Extract Selected Draft').first().json.draftContent) }}\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000009",
+      "name": "Adapt for X Twitter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-api-cred",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nlet content = '';\ntry {\n  content = input.choices[0].message.content.trim();\n} catch(e) {\n  content = '';\n}\n\nif (!content) {\n  return [{json: {error: true, message: 'AI returned empty X/Twitter adaptation'}}];\n}\n\nif (content.length <= 280) {\n  return [{json: {twitterContent: content, charCount: content.length, truncated: false}}];\n}\n\n// Try to truncate at last sentence boundary under 280\nconst sentences = content.match(/[^.!?]+[.!?]+/g) || [content];\nlet truncated = '';\nfor (const sentence of sentences) {\n  if ((truncated + sentence).length <= 280) {\n    truncated += sentence;\n  } else {\n    break;\n  }\n}\n\nif (truncated.length > 0 && truncated.length <= 280) {\n  return [{json: {twitterContent: truncated.trim(), charCount: truncated.trim().length, truncated: true}}];\n}\n\n// Fallback: hard cut at 277 + ...\nconst hardCut = content.substring(0, 277) + '...';\nreturn [{json: {twitterContent: hardCut, charCount: 280, truncated: true}}];"
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000010",
+      "name": "Enforce X Character Limit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an email marketing expert. Adapt the following article into an email newsletter.\\n\\nFORMATTING RULES (follow exactly):\\n- Start with a strong subject line on its own line prefixed with \\\"SUBJECT: \\\"\\n- Short, engaging intro (1-3 sentences)\\n- Main value section with subheadings or bullets for skimmability\\n- Include a clear call-to-action\\n- Friendly sign-off\\n- Tone: like writing to a smart friend who's busy but trusts you\\n- Total length: 250-600 words\\n\\nWrite ONLY the newsletter content. No commentary or explanation.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"ARTICLE:\\n\\n\" + {{ JSON.stringify($('Extract Selected Draft').first().json.draftContent) }}\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000011",
+      "name": "Adapt for Email Newsletter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-api-cred",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nlet content = '';\ntry {\n  content = input.choices[0].message.content.trim();\n} catch(e) {\n  return [{json: {error: true, message: 'AI returned empty newsletter adaptation'}}];\n}\n\n// Extract subject line\nlet subjectLine = '';\nconst subjectMatch = content.match(/^SUBJECT:\\s*(.+)$/mi);\nif (subjectMatch) {\n  subjectLine = subjectMatch[1].trim();\n  content = content.replace(/^SUBJECT:\\s*.+$/mi, '').trim();\n}\n\nconst wordCount = content.split(/\\s+/).length;\nconst hasSubject = subjectLine.length > 0;\nconst hasCTA = /click|read|reply|share|download|check out|subscribe|sign up/i.test(content);\n\nreturn [{json: {\n  newsletterSubject: subjectLine || 'New from Fetemi',\n  newsletterContent: content,\n  wordCount,\n  hasSubject,\n  hasCTA,\n  withinWordLimit: wordCount >= 200 && wordCount <= 700\n}}];"
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000012",
+      "name": "Validate Newsletter Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const linkedin = $('Validate LinkedIn Content').first().json;\nconst twitter = $('Enforce X Character Limit').first().json;\nconst newsletter = $('Validate Newsletter Content').first().json;\nconst draft = $('Extract Selected Draft').first().json;\n\nconst idempotencyKey = draft.submissionId + '_' + draft.selectedDraft + '_' + Date.now().toString(36);\n\nreturn [{json: {\n  submissionId: draft.submissionId,\n  selectedDraft: draft.selectedDraft,\n  draftTitle: draft.draftTitle,\n  draftAngle: draft.draftAngle,\n  publishImmediately: draft.publishImmediately,\n  idempotencyKey,\n  adaptations: {\n    linkedin: {\n      content: linkedin.linkedinContent,\n      charCount: linkedin.charCount,\n      hasCTA: linkedin.hasCTA\n    },\n    twitter: {\n      content: twitter.twitterContent,\n      charCount: twitter.charCount,\n      truncated: twitter.truncated\n    },\n    newsletter: {\n      subject: newsletter.newsletterSubject,\n      content: newsletter.newsletterContent,\n      wordCount: newsletter.wordCount,\n      hasCTA: newsletter.hasCTA\n    }\n  },\n  adaptedAt: new Date().toISOString()\n}}];"
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000013",
+      "name": "Combine Adapted Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://your-project.supabase.co/rest/v1/adapted_content",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"submission_id\": \"{{ $json.submissionId }}\",\n  \"selected_draft\": {{ $json.selectedDraft }},\n  \"draft_title\": {{ JSON.stringify($json.draftTitle) }},\n  \"draft_angle\": {{ JSON.stringify($json.draftAngle) }},\n  \"linkedin_content\": {{ JSON.stringify($json.adaptations.linkedin.content) }},\n  \"twitter_content\": {{ JSON.stringify($json.adaptations.twitter.content) }},\n  \"newsletter_subject\": {{ JSON.stringify($json.adaptations.newsletter.subject) }},\n  \"newsletter_content\": {{ JSON.stringify($json.adaptations.newsletter.content) }},\n  \"idempotency_key\": \"{{ $json.idempotencyKey }}\",\n  \"adapted_at\": \"{{ $json.adaptedAt }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000014",
+      "name": "Save Adapted Content to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-publish-check",
+              "leftValue": "={{ $('Combine Adapted Content').first().json.publishImmediately }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000015",
+      "name": "Publish Immediately?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.LINKEDIN_API_URL || 'https://api.linkedin.com/v2/ugcPosts'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.LINKEDIN_ACCESS_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $('Combine Adapted Content').first().json.idempotencyKey }}_linkedin"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"author\": \"urn:li:person:{{$env.LINKEDIN_PERSON_ID}}\",\n  \"lifecycleState\": \"PUBLISHED\",\n  \"specificContent\": {\n    \"com.linkedin.ugc.ShareContent\": {\n      \"shareCommentary\": {\n        \"text\": {{ JSON.stringify($('Combine Adapted Content').first().json.adaptations.linkedin.content) }}\n      },\n      \"shareMediaCategory\": \"NONE\"\n    }\n  },\n  \"visibility\": {\n    \"com.linkedin.ugc.MemberNetworkVisibility\": \"PUBLIC\"\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000016",
+      "name": "Publish to LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        -150
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.TWITTER_API_URL || 'https://api.twitter.com/2/tweets'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.TWITTER_BEARER_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $('Combine Adapted Content').first().json.idempotencyKey }}_twitter"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($('Combine Adapted Content').first().json.adaptations.twitter.content) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000017",
+      "name": "Publish to X",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.EMAIL_API_URL || 'https://api.sendgrid.com/v3/mail/send'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.SENDGRID_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Idempotency-Key",
+              "value": "={{ $('Combine Adapted Content').first().json.idempotencyKey }}_newsletter"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"personalizations\": [{\n    \"to\": [{\"email\": \"{{$env.NEWSLETTER_LIST_EMAIL || 'newsletter@fetemi.com'}}\"}]\n  }],\n  \"from\": {\"email\": \"{{$env.FROM_EMAIL || 'content@fetemi.com'}}\", \"name\": \"Fetemi\"},\n  \"subject\": {{ JSON.stringify($('Combine Adapted Content').first().json.adaptations.newsletter.subject) }},\n  \"content\": [{\n    \"type\": \"text/html\",\n    \"value\": {{ JSON.stringify($('Combine Adapted Content').first().json.adaptations.newsletter.content) }}\n  }]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000018",
+      "name": "Send Newsletter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        150
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const adapted = $('Combine Adapted Content').first().json;\n\nconst linkedinResult = $('Publish to LinkedIn').first().json;\nconst twitterResult = $('Publish to X').first().json;\nconst newsletterResult = $('Send Newsletter').first().json;\n\nreturn [{json: {\n  submissionId: adapted.submissionId,\n  status: 'published',\n  publishedAt: new Date().toISOString(),\n  results: {\n    linkedin: {\n      published: true,\n      charCount: adapted.adaptations.linkedin.charCount,\n      response: linkedinResult\n    },\n    twitter: {\n      published: true,\n      charCount: adapted.adaptations.twitter.charCount,\n      response: twitterResult\n    },\n    newsletter: {\n      sent: true,\n      subject: adapted.adaptations.newsletter.subject,\n      wordCount: adapted.adaptations.newsletter.wordCount,\n      response: newsletterResult\n    }\n  },\n  message: 'Content published to all platforms successfully.'\n}}];"
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000019",
+      "name": "Prepare Published Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const adapted = $('Combine Adapted Content').first().json;\n\nreturn [{json: {\n  submissionId: adapted.submissionId,\n  status: 'scheduled',\n  adaptedAt: adapted.adaptedAt,\n  adaptations: {\n    linkedin: {\n      preview: adapted.adaptations.linkedin.content.substring(0, 200) + '...',\n      charCount: adapted.adaptations.linkedin.charCount\n    },\n    twitter: {\n      preview: adapted.adaptations.twitter.content,\n      charCount: adapted.adaptations.twitter.charCount\n    },\n    newsletter: {\n      subject: adapted.adaptations.newsletter.subject,\n      preview: adapted.adaptations.newsletter.content.substring(0, 200) + '...',\n      wordCount: adapted.adaptations.newsletter.wordCount\n    }\n  },\n  message: 'Content adapted for all platforms and saved. Ready for manual publishing or scheduling.'\n}}];"
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000020",
+      "name": "Prepare Scheduled Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        250
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://your-project.supabase.co/rest/v1/submissions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.submissionId }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"{{ $json.status }}\",\n  \"completed_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000021",
+      "name": "Update Submission Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, submissionId: $('Update Submission Status').first().json.submission_id || $json.submissionId, status: $json.status, adaptations: $json.adaptations || $json.results, message: $json.message }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000022",
+      "name": "Return Final Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3960,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83d\udccb SELECTION VALIDATION\nValidate draft selection, fetch submission, check state and expiry, lock for processing",
+        "height": 200,
+        "width": 1100
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000101",
+      "name": "Sticky Note - Selection Validation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \u270f\ufe0f PLATFORM ADAPTATION \u2014 LinkedIn, X, Newsletter\nAI-powered content adaptation with platform-specific formatting rules and validation",
+        "height": 200,
+        "width": 1350
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000102",
+      "name": "Sticky Note - Platform Adaptation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83d\udce4 PUBLISHING \u2014 With idempotency keys\nConditional publishing to LinkedIn, X/Twitter, and email newsletter with retry and dedup",
+        "height": 200,
+        "width": 700
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000103",
+      "name": "Sticky Note - Publishing",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3060,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83d\udcbe STATE UPDATE\nUpdate submission status in Supabase and return final result to frontend",
+        "height": 200,
+        "width": 500
+      },
+      "id": "b2c3d4e5-2001-4000-9001-000000000104",
+      "name": "Sticky Note - State Update",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3700,
+        -250
+      ]
+    }
+  ],
+  "connections": {
+    "Receive Draft Selection": {
+      "main": [
+        [
+          {
+            "node": "Validate Selection Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Selection Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch Submission from Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Submission from Supabase": {
+      "main": [
+        [
+          {
+            "node": "Validate Submission State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Submission State": {
+      "main": [
+        [
+          {
+            "node": "Lock Submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock Submission": {
+      "main": [
+        [
+          {
+            "node": "Extract Selected Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Selected Draft": {
+      "main": [
+        [
+          {
+            "node": "Adapt for LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adapt for LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Validate LinkedIn Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate LinkedIn Content": {
+      "main": [
+        [
+          {
+            "node": "Adapt for X Twitter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adapt for X Twitter": {
+      "main": [
+        [
+          {
+            "node": "Enforce X Character Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enforce X Character Limit": {
+      "main": [
+        [
+          {
+            "node": "Adapt for Email Newsletter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adapt for Email Newsletter": {
+      "main": [
+        [
+          {
+            "node": "Validate Newsletter Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Newsletter Content": {
+      "main": [
+        [
+          {
+            "node": "Combine Adapted Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Adapted Content": {
+      "main": [
+        [
+          {
+            "node": "Save Adapted Content to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Adapted Content to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Publish Immediately?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Immediately?": {
+      "main": [
+        [
+          {
+            "node": "Publish to LinkedIn",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Publish to X",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Newsletter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Scheduled Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Prepare Published Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to X": {
+      "main": [
+        [
+          {
+            "node": "Prepare Published Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Newsletter": {
+      "main": [
+        [
+          {
+            "node": "Prepare Published Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Published Response": {
+      "main": [
+        [
+          {
+            "node": "Update Submission Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Scheduled Response": {
+      "main": [
+        [
+          {
+            "node": "Update Submission Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Submission Status": {
+      "main": [
+        [
+          {
+            "node": "Return Final Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-25T00:00:00.000Z",
+  "versionId": "wf2-selection-publishing-v1",
+  "id": "wf2-draft-pub"
+}

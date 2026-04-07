@@ -1,0 +1,14 @@
+{
+  "description": "URL that doesn't match expected format",
+  "target": "POST /content-submit",
+  "payload": {
+    "url": "not-a-real-url"
+  },
+  "expectedResult": {
+    "statusCode": 400,
+    "body": {
+      "error": true,
+      "message": "url must be a valid HTTP/HTTPS URL"
+    }
+  }
+}

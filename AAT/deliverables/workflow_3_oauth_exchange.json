@@ -1,0 +1,564 @@
+{
+  "updatedAt": "2026-03-25T22:00:00.000Z",
+  "createdAt": "2026-03-25T22:00:00.000Z",
+  "id": "wf3-oauth-exchange",
+  "name": "OAuth Token Exchange",
+  "description": "Handles OAuth callbacks from the frontend. Exchanges authorization codes for access tokens (LinkedIn and Twitter/X), fetches user profiles, and stores credentials in Supabase platform_connections table.",
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "oauth-callback",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000001",
+      "name": "Receive OAuth Callback",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "oauth-callback-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst errors = [];\n\nif (!body || typeof body !== 'object') {\n  errors.push('Request body is required');\n}\n\nconst platform = (body?.platform || '').toString().trim().toLowerCase();\nconst code = (body?.code || '').toString().trim();\nconst redirectUri = (body?.redirect_uri || body?.redirectUri || '').toString().trim();\nconst codeVerifier = (body?.code_verifier || body?.codeVerifier || '').toString().trim();\n\nif (!['linkedin', 'twitter'].includes(platform)) {\n  errors.push('platform must be \"linkedin\" or \"twitter\"');\n}\n\nif (!code) {\n  errors.push('code (authorization code) is required');\n}\n\nif (!redirectUri) {\n  errors.push('redirect_uri is required');\n}\n\nif (platform === 'twitter' && !codeVerifier) {\n  errors.push('code_verifier is required for Twitter PKCE flow');\n}\n\nif (errors.length > 0) {\n  return [{ json: { error: true, statusCode: 400, message: errors.join('; ') } }];\n}\n\nreturn [{ json: {\n  error: false,\n  platform,\n  code,\n  redirectUri,\n  codeVerifier\n} }];"
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000002",
+      "name": "Validate OAuth Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-platform-linkedin",
+              "leftValue": "={{ $json.platform }}",
+              "rightValue": "linkedin",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000003",
+      "name": "Route by Platform",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.linkedin.com/oauth/v2/accessToken",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "string",
+        "body": "=grant_type=authorization_code&code={{ encodeURIComponent($json.code) }}&redirect_uri={{ encodeURIComponent($json.redirectUri) }}&client_id={{ encodeURIComponent($env.LINKEDIN_CLIENT_ID) }}&client_secret={{ encodeURIComponent($env.LINKEDIN_CLIENT_SECRET) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000004",
+      "name": "Exchange LinkedIn Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        -150
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twitter.com/2/oauth2/token",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Basic {{ Buffer.from($env.TWITTER_CLIENT_ID + ':' + $env.TWITTER_CLIENT_SECRET).toString('base64') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "string",
+        "body": "=grant_type=authorization_code&code={{ encodeURIComponent($json.code) }}&redirect_uri={{ encodeURIComponent($json.redirectUri) }}&client_id={{ encodeURIComponent($env.TWITTER_CLIENT_ID) }}&code_verifier={{ encodeURIComponent($json.codeVerifier) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000005",
+      "name": "Exchange Twitter Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        150
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const tokenResponse = $input.first().json;\nconst oauthInput = $('Validate OAuth Input').first().json;\n\nif (!tokenResponse.access_token) {\n  return [{ json: { error: true, statusCode: 401, message: 'LinkedIn token exchange failed: ' + JSON.stringify(tokenResponse) } }];\n}\n\nconst expiresIn = tokenResponse.expires_in || 5184000; // LinkedIn default: 60 days\nconst expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();\n\nreturn [{ json: {\n  error: false,\n  platform: 'linkedin',\n  accessToken: tokenResponse.access_token,\n  refreshToken: tokenResponse.refresh_token || null,\n  tokenExpiresAt: expiresAt,\n  scope: tokenResponse.scope || ''\n} }];"
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000006",
+      "name": "Parse LinkedIn Token Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const tokenResponse = $input.first().json;\nconst oauthInput = $('Validate OAuth Input').first().json;\n\nif (!tokenResponse.access_token) {\n  return [{ json: { error: true, statusCode: 401, message: 'Twitter token exchange failed: ' + JSON.stringify(tokenResponse) } }];\n}\n\nconst expiresIn = tokenResponse.expires_in || 7200; // Twitter default: 2 hours\nconst expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();\n\nreturn [{ json: {\n  error: false,\n  platform: 'twitter',\n  accessToken: tokenResponse.access_token,\n  refreshToken: tokenResponse.refresh_token || null,\n  tokenExpiresAt: expiresAt,\n  scope: tokenResponse.scope || ''\n} }];"
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000007",
+      "name": "Parse Twitter Token Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.linkedin.com/v2/userinfo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.accessToken }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000008",
+      "name": "Get LinkedIn Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        -150
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.twitter.com/2/users/me",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.accessToken }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000009",
+      "name": "Get Twitter Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        150
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $input.first().json;\nconst tokenData = $('Parse LinkedIn Token Response').first().json;\n\nconst platformUserId = profile.sub || profile.id || '';\nconst platformUsername = profile.name || [profile.given_name, profile.family_name].filter(Boolean).join(' ') || profile.email || '';\n\nif (!platformUserId) {\n  return [{ json: { error: true, statusCode: 500, message: 'Could not retrieve LinkedIn user ID from profile' } }];\n}\n\nreturn [{ json: {\n  platform: 'linkedin',\n  accessToken: tokenData.accessToken,\n  refreshToken: tokenData.refreshToken,\n  tokenExpiresAt: tokenData.tokenExpiresAt,\n  platformUserId,\n  platformUsername,\n  profilePicture: profile.picture || null\n} }];"
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000010",
+      "name": "Prepare LinkedIn Connection Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $input.first().json;\nconst tokenData = $('Parse Twitter Token Response').first().json;\n\nconst userData = profile.data || profile;\nconst platformUserId = userData.id || '';\nconst platformUsername = userData.username || userData.name || '';\n\nif (!platformUserId) {\n  return [{ json: { error: true, statusCode: 500, message: 'Could not retrieve Twitter user ID from profile' } }];\n}\n\nreturn [{ json: {\n  platform: 'twitter',\n  accessToken: tokenData.accessToken,\n  refreshToken: tokenData.refreshToken,\n  tokenExpiresAt: tokenData.tokenExpiresAt,\n  platformUserId,\n  platformUsername,\n  profileName: userData.name || null\n} }];"
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000011",
+      "name": "Prepare Twitter Connection Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-project.supabase.co/rest/v1/platform_connections",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "on_conflict",
+              "value": "platform,platform_user_id"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation,resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"platform\": {{ JSON.stringify($json.platform) }},\n  \"access_token\": {{ JSON.stringify($json.accessToken) }},\n  \"refresh_token\": {{ JSON.stringify($json.refreshToken) }},\n  \"token_expires_at\": {{ JSON.stringify($json.tokenExpiresAt) }},\n  \"platform_user_id\": {{ JSON.stringify($json.platformUserId) }},\n  \"platform_username\": {{ JSON.stringify($json.platformUsername) }},\n  \"status\": \"active\",\n  \"connected_at\": {{ JSON.stringify(new Date().toISOString()) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000012",
+      "name": "Save Connection to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const connectionData = $input.first().json;\nconst platform = connectionData.platform || $('Validate OAuth Input').first().json.platform;\n\n// Try to get username from the connection data or the preparation nodes\nlet username = connectionData.platform_username || '';\nif (!username) {\n  try {\n    if (platform === 'linkedin') {\n      username = $('Prepare LinkedIn Connection Data').first().json.platformUsername;\n    } else {\n      username = $('Prepare Twitter Connection Data').first().json.platformUsername;\n    }\n  } catch(e) {\n    username = 'connected';\n  }\n}\n\nreturn [{ json: {\n  success: true,\n  platform,\n  username,\n  message: `${platform} account connected successfully`\n} }];"
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000013",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000014",
+      "name": "Return Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2020,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## OAuth Token Exchange\nReceives authorization code from frontend, exchanges for access/refresh tokens, fetches user profile, saves to Supabase platform_connections",
+        "height": 200,
+        "width": 500
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000101",
+      "name": "Sticky Note - OAuth Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Token Exchange\nLinkedIn: standard OAuth2 code exchange\nTwitter: OAuth2 with PKCE + Basic auth header",
+        "height": 200,
+        "width": 600
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000102",
+      "name": "Sticky Note - Token Exchange",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        660,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Profile Fetch & Save\nGet user info from platform API, then upsert connection to Supabase",
+        "height": 200,
+        "width": 700
+      },
+      "id": "c3d4e5f6-3001-4000-9001-000000000103",
+      "name": "Sticky Note - Profile and Save",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -250
+      ]
+    }
+  ],
+  "connections": {
+    "Receive OAuth Callback": {
+      "main": [
+        [
+          {
+            "node": "Validate OAuth Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate OAuth Input": {
+      "main": [
+        [
+          {
+            "node": "Route by Platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Platform": {
+      "main": [
+        [
+          {
+            "node": "Exchange LinkedIn Token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Exchange Twitter Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exchange LinkedIn Token": {
+      "main": [
+        [
+          {
+            "node": "Parse LinkedIn Token Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exchange Twitter Token": {
+      "main": [
+        [
+          {
+            "node": "Parse Twitter Token Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LinkedIn Token Response": {
+      "main": [
+        [
+          {
+            "node": "Get LinkedIn Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Twitter Token Response": {
+      "main": [
+        [
+          {
+            "node": "Get Twitter Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get LinkedIn Profile": {
+      "main": [
+        [
+          {
+            "node": "Prepare LinkedIn Connection Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Twitter Profile": {
+      "main": [
+        [
+          {
+            "node": "Prepare Twitter Connection Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare LinkedIn Connection Data": {
+      "main": [
+        [
+          {
+            "node": "Save Connection to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Twitter Connection Data": {
+      "main": [
+        [
+          {
+            "node": "Save Connection to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Connection to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Return Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "pinData": {}
+}

@@ -1,0 +1,934 @@
+{
+  "name": "Content Intake & Draft Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cf-content-submit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000001",
+      "name": "Webhook - Content Submit",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "content-submit-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst errors = [];\n\nif (!body || typeof body !== 'object') {\n  errors.push('Request body is required');\n}\n\nconst rawIdea = body?.rawIdea?.toString().trim() || '';\nconst url = body?.url?.toString().trim() || '';\n\nif (!rawIdea && !url) {\n  errors.push('Either rawIdea or url must be provided');\n}\n\nif (url && !/^https?:\\/\\/.+\\..+/.test(url)) {\n  errors.push('url must be a valid HTTP/HTTPS URL');\n}\n\nif (rawIdea && rawIdea.length > 10000) {\n  errors.push('rawIdea must be under 10,000 characters');\n}\n\nconst payloadSize = JSON.stringify(body).length;\nif (payloadSize > 1048576) {\n  errors.push('Payload exceeds 1MB size limit');\n}\n\n// Sanitize inputs\nconst sanitized = {\n  rawIdea: rawIdea.replace(/<[^>]*>/g, '').substring(0, 10000),\n  url: url,\n  publishImmediately: body?.publishImmediately === true,\n};\n\nif (errors.length > 0) {\n  return [{json: {error: true, statusCode: 400, message: errors.join('; ')}}];\n}\n\nreturn [{json: {error: false, ...sanitized}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000002",
+      "name": "Validate Input Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst content = input.rawIdea || input.url;\n\n// Simple hash function\nlet hash = 0;\nfor (let i = 0; i < content.length; i++) {\n  const char = content.charCodeAt(i);\n  hash = ((hash << 5) - hash) + char;\n  hash = hash & hash;\n}\nconst contentHash = Math.abs(hash).toString(36);\n\nconst submissionId = 'sub_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 8);\nconst tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();\n\nreturn [{json: {\n  ...input,\n  submissionId,\n  contentHash,\n  tenMinAgo,\n  createdAt: new Date().toISOString()\n}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000003",
+      "name": "Generate Submission ID & Dedup Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        550,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://your-project.supabase.co/rest/v1/submissions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "content_hash",
+              "value": "=eq.{{ $json.contentHash }}"
+            },
+            {
+              "name": "created_at",
+              "value": "=gt.{{ $json.tenMinAgo }}"
+            },
+            {
+              "name": "select",
+              "value": "id,content_hash,created_at"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000004",
+      "name": "Check Duplicate in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-dup-check",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty",
+                "name": "filter.operator.isNotEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000005",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Duplicate submission detected. A similar content was submitted within the last 10 minutes.', statusCode: 409 }) }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000006",
+      "name": "Return Duplicate Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-url-check",
+              "leftValue": "={{ $('Generate Submission ID & Dedup Hash').first().json.url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty",
+                "name": "filter.operator.isNotEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000007",
+      "name": "URL Provided?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Generate Submission ID & Dedup Hash').first().json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000008",
+      "name": "Fetch URL Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -50
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nlet text = '';\n\nif (typeof response === 'string') {\n  text = response;\n} else if (response.data) {\n  text = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);\n} else {\n  text = JSON.stringify(response);\n}\n\n// Strip HTML tags\ntext = text.replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '');\ntext = text.replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '');\ntext = text.replace(/<[^>]+>/g, ' ');\ntext = text.replace(/&nbsp;/g, ' ');\ntext = text.replace(/&amp;/g, '&');\ntext = text.replace(/&lt;/g, '<');\ntext = text.replace(/&gt;/g, '>');\ntext = text.replace(/\\s+/g, ' ').trim();\n\n// Truncate to 5000 chars\ntext = text.substring(0, 5000);\n\nif (text.length < 50) {\n  return [{json: {error: true, statusCode: 422, message: 'Could not extract meaningful content from URL. Try submitting a raw idea instead.'}}];\n}\n\nconst prev = $('Generate Submission ID & Dedup Hash').first().json;\nreturn [{json: {\n  ...prev,\n  contentBase: text,\n  inputType: 'url'\n}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000009",
+      "name": "Extract Text from URL Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -50
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Generate Submission ID & Dedup Hash').first().json;\nreturn [{json: {\n  ...prev,\n  contentBase: prev.rawIdea,\n  inputType: 'raw_idea'\n}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000010",
+      "name": "Use Raw Idea",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nreturn [{json: {\n  submissionId: input.submissionId,\n  contentHash: input.contentHash,\n  contentBase: input.contentBase,\n  inputType: input.inputType,\n  rawIdea: input.rawIdea,\n  url: input.url,\n  publishImmediately: input.publishImmediately,\n  createdAt: input.createdAt\n}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000011",
+      "name": "Prepare Content Base",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://your-project.supabase.co/rest/v1/submissions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": \"{{ $json.submissionId }}\",\n  \"content_hash\": \"{{ $json.contentHash }}\",\n  \"content_base\": {{ JSON.stringify($json.contentBase) }},\n  \"input_type\": \"{{ $json.inputType }}\",\n  \"raw_input\": {{ JSON.stringify($json.rawIdea || '') }},\n  \"publish_immediately\": {{ $json.publishImmediately }},\n  \"status\": \"generating\",\n  \"created_at\": \"{{ $json.createdAt }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000012",
+      "name": "Save Submission to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an expert content writer for a marketing agency called Fetemi. Write an SEO-optimized article taking a CONTRARIAN or challenge-the-status-quo angle on the topic provided.\\n\\nSEO RULES (follow ALL of these):\\n1. Place primary keywords in the title and within the first 100 words\\n2. Use a mix of long-tail and short-tail keywords throughout body text and headers\\n3. Follow strict heading hierarchy: H1 (title) \u2192 H2 (main sections) \u2192 H3 (subsections)\\n4. Aim for 700-800 words per main section\\n5. Keep paragraphs short: 2-3 sentences max\\n6. Include 2-3 relevant internal/external link suggestions (mark as [LINK: description])\\n7. Write at a Grade 7 readability level \u2014 clear, direct, jargon-free\\n8. Suggest 1 contextually relevant image placement (mark as [IMAGE: description])\\n\\nFORMAT: Start with a markdown H1 title. Use H2 and H3 subheadings. Write in a bold, opinionated voice that challenges conventional thinking.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify(\"Write a contrarian, SEO-optimized article on the following topic:\\n\\n\" + $('Prepare Content Base').first().json.contentBase + \"\n\nIMPORTANT: Write the ENTIRE article in \" + ($('Webhook - Content Submit').first().json.language || 'English') + \". Do not switch languages at any point.\") }}\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000013",
+      "name": "Generate Draft 1 \u2014 Contrarian Angle",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-api-cred",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nlet content = '';\n\ntry {\n  if (response.choices && response.choices[0]) {\n    content = response.choices[0].message.content;\n  }\n} catch(e) {\n  content = '';\n}\n\nif (!content || content.trim().length === 0) {\n  return [{json: {error: true, message: 'AI returned empty draft'}}];\n}\n\n// Strip meta-commentary\ncontent = content.replace(/^(Here's|Here is|Below is|I've written|Sure,).*?\\n+/i, '');\ncontent = content.trim();\n\nconst wordCount = content.split(/\\s+/).length;\nif (wordCount < 300) {\n  return [{json: {error: true, message: `Draft too short: ${wordCount} words (minimum 300)`}}];\n}\n\n// Extract title (first line that starts with # or is the first non-empty line)\nlet title = '';\nconst lines = content.split('\\n');\nfor (const line of lines) {\n  const trimmed = line.trim();\n  if (trimmed) {\n    title = trimmed.replace(/^#+\\s*/, '');\n    break;\n  }\n}\n\nreturn [{json: {\n  draftContent: content,\n  draftTitle: title,\n  wordCount,\n  validated: true\n}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000014",
+      "name": "Validate Draft 1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": {{ JSON.stringify(\"You are an expert content writer for a marketing agency called Fetemi. Write an SEO-optimized article taking a PRACTICAL HOW-TO angle on the topic provided.\\n\\nIMPORTANT: A previous draft took a contrarian angle with the title: \" + $('Validate Draft 1').first().json.draftTitle + \". Your approach must be distinctly different \u2014 focus on actionable steps and practical advice.\\n\\nSEO RULES (follow ALL of these):\\n1. Place primary keywords in the title and within the first 100 words\\n2. Use a mix of long-tail and short-tail keywords throughout body text and headers\\n3. Follow strict heading hierarchy: H1 (title) \u2192 H2 (main sections) \u2192 H3 (subsections)\\n4. Aim for 700-800 words per main section\\n5. Keep paragraphs short: 2-3 sentences max\\n6. Include 2-3 relevant internal/external link suggestions (mark as [LINK: description])\\n7. Write at a Grade 7 readability level \u2014 clear, direct, jargon-free\\n8. Suggest 1 contextually relevant image placement (mark as [IMAGE: description])\\n\\nFORMAT: Start with a markdown H1 title. Use numbered steps, bullet points, and H2/H3 subheadings. Write in a friendly, instructional voice.\") }}\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify(\"Write a practical how-to, SEO-optimized article on the following topic:\\n\\n\" + $('Prepare Content Base').first().json.contentBase + \"\n\nIMPORTANT: Write the ENTIRE article in \" + ($('Webhook - Content Submit').first().json.language || 'English') + \". Do not switch languages at any point.\") }}\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000015",
+      "name": "Generate Draft 2 \u2014 Practical How-To",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-api-cred",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nlet content = '';\n\ntry {\n  if (response.choices && response.choices[0]) {\n    content = response.choices[0].message.content;\n  }\n} catch(e) {\n  content = '';\n}\n\nif (!content || content.trim().length === 0) {\n  return [{json: {error: true, message: 'AI returned empty draft'}}];\n}\n\n// Strip meta-commentary\ncontent = content.replace(/^(Here's|Here is|Below is|I've written|Sure,).*?\\n+/i, '');\ncontent = content.trim();\n\nconst wordCount = content.split(/\\s+/).length;\nif (wordCount < 300) {\n  return [{json: {error: true, message: `Draft too short: ${wordCount} words (minimum 300)`}}];\n}\n\n// Extract title (first line that starts with # or is the first non-empty line)\nlet title = '';\nconst lines = content.split('\\n');\nfor (const line of lines) {\n  const trimmed = line.trim();\n  if (trimmed) {\n    title = trimmed.replace(/^#+\\s*/, '');\n    break;\n  }\n}\n\nreturn [{json: {\n  draftContent: content,\n  draftTitle: title,\n  wordCount,\n  validated: true\n}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000016",
+      "name": "Validate Draft 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"temperature\": 0.8,\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": {{ JSON.stringify(\"You are an expert content writer for a marketing agency called Fetemi. Write an SEO-optimized article taking a DATA & TRENDS angle on the topic provided.\\n\\nIMPORTANT: Previous drafts covered contrarian (title: \" + $('Validate Draft 1').first().json.draftTitle + \") and how-to (title: \" + $('Validate Draft 2').first().json.draftTitle + \") angles. Your approach must use data, statistics, trends, and research-backed insights. Be distinctly different from both previous drafts.\\n\\nSEO RULES (follow ALL of these):\\n1. Place primary keywords in the title and within the first 100 words\\n2. Use a mix of long-tail and short-tail keywords throughout body text and headers\\n3. Follow strict heading hierarchy: H1 (title) \u2192 H2 (main sections) \u2192 H3 (subsections)\\n4. Aim for 700-800 words per main section\\n5. Keep paragraphs short: 2-3 sentences max\\n6. Include 2-3 relevant internal/external link suggestions (mark as [LINK: description])\\n7. Write at a Grade 7 readability level \u2014 clear, direct, jargon-free\\n8. Suggest 1 contextually relevant image placement (mark as [IMAGE: description])\\n\\nFORMAT: Start with a markdown H1 title. Cite specific numbers, percentages, and trends. Use H2/H3 subheadings. Write in an authoritative, evidence-based voice.\") }}\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify(\"Write a data-driven, trends-focused, SEO-optimized article on the following topic:\\n\\n\" + $('Prepare Content Base').first().json.contentBase + \"\n\nIMPORTANT: Write the ENTIRE article in \" + ($('Webhook - Content Submit').first().json.language || 'English') + \". Do not switch languages at any point.\") }}\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000017",
+      "name": "Generate Draft 3 \u2014 Data & Trends",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-api-cred",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nlet content = '';\n\ntry {\n  if (response.choices && response.choices[0]) {\n    content = response.choices[0].message.content;\n  }\n} catch(e) {\n  content = '';\n}\n\nif (!content || content.trim().length === 0) {\n  return [{json: {error: true, message: 'AI returned empty draft'}}];\n}\n\n// Strip meta-commentary\ncontent = content.replace(/^(Here's|Here is|Below is|I've written|Sure,).*?\\n+/i, '');\ncontent = content.trim();\n\nconst wordCount = content.split(/\\s+/).length;\nif (wordCount < 300) {\n  return [{json: {error: true, message: `Draft too short: ${wordCount} words (minimum 300)`}}];\n}\n\n// Extract title (first line that starts with # or is the first non-empty line)\nlet title = '';\nconst lines = content.split('\\n');\nfor (const line of lines) {\n  const trimmed = line.trim();\n  if (trimmed) {\n    title = trimmed.replace(/^#+\\s*/, '');\n    break;\n  }\n}\n\nreturn [{json: {\n  draftContent: content,\n  draftTitle: title,\n  wordCount,\n  validated: true\n}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000018",
+      "name": "Validate Draft 3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const draft1 = $('Validate Draft 1').first().json;\nconst draft2 = $('Validate Draft 2').first().json;\nconst draft3 = $('Validate Draft 3').first().json;\nconst submission = $('Prepare Content Base').first().json;\n\nconst drafts = [\n  {\n    index: 1,\n    angle: 'Contrarian / Challenge Assumptions',\n    title: draft1.draftTitle,\n    content: draft1.draftContent,\n    wordCount: draft1.wordCount\n  },\n  {\n    index: 2,\n    angle: 'Practical How-To Guide',\n    title: draft2.draftTitle,\n    content: draft2.draftContent,\n    wordCount: draft2.wordCount\n  },\n  {\n    index: 3,\n    angle: 'Data, Trends & Research',\n    title: draft3.draftTitle,\n    content: draft3.draftContent,\n    wordCount: draft3.wordCount\n  }\n];\n\nreturn [{json: {\n  submissionId: submission.submissionId,\n  drafts,\n  generatedAt: new Date().toISOString()\n}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000019",
+      "name": "Package All Drafts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://your-project.supabase.co/rest/v1/submissions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.submissionId }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"pending_review\",\n  \"drafts\": {{ JSON.stringify($json.drafts) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000020",
+      "name": "Update Submission with Drafts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Package All Drafts').first().json;\nreturn [{json: {\n  statusCode: 200,\n  body: {\n    success: true,\n    submissionId: data.submissionId,\n    status: 'pending_review',\n    drafts: data.drafts.map(d => ({\n      index: d.index,\n      angle: d.angle,\n      title: d.title,\n      preview: d.content.substring(0, 200) + '...',\n      wordCount: d.wordCount\n    })),\n    message: 'Three drafts generated. Please review and select one to proceed.'\n  }\n}}];"
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000021",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000022",
+      "name": "Return Drafts to Frontend",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4180,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83d\udce5 INPUT HANDLING\nValidation, sanitization, duplicate detection",
+        "height": 200,
+        "width": 900
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000101",
+      "name": "Sticky Note - Input Handling",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83d\udd17 URL EXTRACTION\nFetch and extract content from URLs with fallback",
+        "height": 200,
+        "width": 500
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000102",
+      "name": "Sticky Note - URL Extraction",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83e\udd16 DRAFT GENERATION\nSequential AI generation with inter-draft context for angle diversity",
+        "height": 200,
+        "width": 1200
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000103",
+      "name": "Sticky Note - Draft Generation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2180,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83d\udcbe STATE MANAGEMENT\nPersist drafts to Supabase and return to frontend",
+        "height": 200,
+        "width": 700
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000104",
+      "name": "Sticky Note - State Management",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3500,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-validation-error",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "name": "filter.operator.true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000030",
+      "name": "Validation Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        330,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.message, statusCode: $json.statusCode || 400 }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "a1b2c3d4-1001-4000-8001-000000000031",
+      "name": "Return Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        550,
+        -150
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook - Content Submit": {
+      "main": [
+        [
+          {
+            "node": "Validate Input Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input Payload": {
+      "main": [
+        [
+          {
+            "node": "Validation Failed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Submission ID & Dedup Hash": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicate in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Return Duplicate Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "URL Provided?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "URL Provided?": {
+      "main": [
+        [
+          {
+            "node": "Fetch URL Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Use Raw Idea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch URL Content": {
+      "main": [
+        [
+          {
+            "node": "Extract Text from URL Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text from URL Response": {
+      "main": [
+        [
+          {
+            "node": "Prepare Content Base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Raw Idea": {
+      "main": [
+        [
+          {
+            "node": "Prepare Content Base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Content Base": {
+      "main": [
+        [
+          {
+            "node": "Save Submission to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Submission to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Generate Draft 1 \u2014 Contrarian Angle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Draft 1 \u2014 Contrarian Angle": {
+      "main": [
+        [
+          {
+            "node": "Validate Draft 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Draft 1": {
+      "main": [
+        [
+          {
+            "node": "Generate Draft 2 \u2014 Practical How-To",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Draft 2 \u2014 Practical How-To": {
+      "main": [
+        [
+          {
+            "node": "Validate Draft 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Draft 2": {
+      "main": [
+        [
+          {
+            "node": "Generate Draft 3 \u2014 Data & Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Draft 3 \u2014 Data & Trends": {
+      "main": [
+        [
+          {
+            "node": "Validate Draft 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Draft 3": {
+      "main": [
+        [
+          {
+            "node": "Package All Drafts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Package All Drafts": {
+      "main": [
+        [
+          {
+            "node": "Update Submission with Drafts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Submission with Drafts": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Return Drafts to Frontend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Failed?": {
+      "main": [
+        [
+          {
+            "node": "Return Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Submission ID & Dedup Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-25T00:00:00.000Z",
+  "versionId": "wf1-intake-generation-v1",
+  "id": "wf1-intake-gen"
+}

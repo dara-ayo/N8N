@@ -1,0 +1,4 @@
+#!/bin/bash
+export N8N_RUNNERS_TASK_TIMEOUT=300
+export N8N_RUNNERS_MAX_PAYLOAD=1048576
+n8n start

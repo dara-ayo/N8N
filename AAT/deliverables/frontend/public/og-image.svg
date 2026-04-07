@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" fill="none">
+  <!-- Background -->
+  <rect width="1200" height="630" fill="#0f0f11"/>
+
+  <!-- Subtle radial glow -->
+  <radialGradient id="glow" cx="50%" cy="45%" r="55%" gradientUnits="userSpaceOnUse">
+    <stop offset="0%" stop-color="#7c6af5" stop-opacity="0.18"/>
+    <stop offset="100%" stop-color="#0f0f11" stop-opacity="0"/>
+  </radialGradient>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <!-- Grid dot pattern -->
+  <pattern id="grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+    <circle cx="0.5" cy="0.5" r="0.5" fill="#7c6af5" fill-opacity="0.18"/>
+  </pattern>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+
+  <!-- Top accent line -->
+  <rect x="0" y="0" width="1200" height="2" fill="url(#topline)"/>
+  <linearGradient id="topline" x1="0" y1="0" x2="1200" y2="0" gradientUnits="userSpaceOnUse">
+    <stop offset="0%" stop-color="#7c6af5" stop-opacity="0"/>
+    <stop offset="30%" stop-color="#7c6af5" stop-opacity="0.8"/>
+    <stop offset="70%" stop-color="#9585f8" stop-opacity="0.8"/>
+    <stop offset="100%" stop-color="#9585f8" stop-opacity="0"/>
+  </linearGradient>
+
+  <!-- Logo mark — centered above text -->
+  <!-- Logo background pill -->
+  <rect x="548" y="195" width="104" height="104" rx="24" fill="#7c6af5"/>
+
+  <!-- Document body inside logo -->
+  <rect x="568" y="213" width="42" height="52" rx="6" fill="white" fill-opacity="0.18"/>
+  <rect x="568" y="213" width="42" height="52" rx="6" stroke="white" stroke-width="4" stroke-opacity="0.9"/>
+
+  <!-- Document lines -->
+  <line x1="578" y1="229" x2="600" y2="229" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-opacity="0.9"/>
+  <line x1="578" y1="240" x2="600" y2="240" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-opacity="0.9"/>
+  <line x1="578" y1="251" x2="591" y2="251" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-opacity="0.9"/>
+
+  <!-- Flow arrow -->
+  <line x1="612" y1="247" x2="629" y2="247" stroke="white" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M621 239 L629 247 L621 255" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- ContentFlow wordmark -->
+  <text
+    x="600"
+    y="355"
+    font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    font-size="72"
+    font-weight="700"
+    fill="white"
+    text-anchor="middle"
+    letter-spacing="-2"
+  >ContentFlow</text>
+
+  <!-- Tagline -->
+  <text
+    x="600"
+    y="405"
+    font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    font-size="26"
+    font-weight="400"
+    fill="#7c6af5"
+    text-anchor="middle"
+    letter-spacing="0.5"
+  >Generate · Adapt · Publish</text>
+
+  <!-- Separator line -->
+  <rect x="480" y="428" width="240" height="1" fill="#7c6af5" fill-opacity="0.3"/>
+
+  <!-- "by Fetemi Marketing" subtitle -->
+  <text
+    x="600"
+    y="458"
+    font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    font-size="20"
+    font-weight="400"
+    fill="white"
+    fill-opacity="0.4"
+    text-anchor="middle"
+    letter-spacing="0.5"
+  >by Fetemi Marketing</text>
+
+  <!-- Bottom corner accent dots -->
+  <circle cx="80" cy="550" r="3" fill="#7c6af5" fill-opacity="0.5"/>
+  <circle cx="100" cy="550" r="3" fill="#7c6af5" fill-opacity="0.3"/>
+  <circle cx="120" cy="550" r="3" fill="#7c6af5" fill-opacity="0.15"/>
+
+  <circle cx="1120" cy="550" r="3" fill="#9585f8" fill-opacity="0.5"/>
+  <circle cx="1100" cy="550" r="3" fill="#9585f8" fill-opacity="0.3"/>
+  <circle cx="1080" cy="550" r="3" fill="#9585f8" fill-opacity="0.15"/>
+</svg>
